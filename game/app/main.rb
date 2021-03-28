@@ -88,10 +88,10 @@ def setup(args)
     }
   }
   args.state.colliders = [
-    [-10, -10, 1300, 10],
-    [-10, 720, 1300, 10],
-    [-10, -10, 10, 740],
-    [1280, -10, 10, 740]
+    [-100, -100, 1480, 100],
+    [-100, 720, 1480, 100],
+    [-100, -100, 100, 920],
+    [1280, -100, 100, 920]
   ]
 end
 
@@ -158,7 +158,7 @@ def update_ants(args)
     change_goal_direction_randomly(args, ant)
     # follow_food(args, ant)
     turn_ant_towards_goal_direction(ant)
-    handle_collision(args, ant)
+    handle_collision(args, ant) if args.tick_count.mod_zero? 10
     move_ant(ant)
   end
 end
