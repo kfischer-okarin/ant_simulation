@@ -15,6 +15,7 @@ ANT_HALF_H = ANT_H.div(2)
 MAX_SPEED = 80
 STEER_STRENGTH = 80
 WANDER_STRENGTH = 0.1
+CELL_SIZE = 40
 
 DT = 1 / 60
 
@@ -73,18 +74,27 @@ def build_ant(args)
     angle_anchor_x: 0.5,
     angle_anchor_y: 0.5,
     v: [0, 0],
-    goal_direction: [0, 1],
+    acceleration: [0, 0],
+    goal_direction: [0, 1]
   ) do |entity|
     entity.attr_sprite
   end
 end
 
 def setup(args)
-  args.state.food = build_food(args)
-  args.state.ants = 50.map_with_index {
+  args.state.cursor = build_food(args)
+  args.state.food = {}
+  args.state.cells = (1280 / CELL_SIZE).map_with_index {
+    (720 / CELL_SIZE).map_with_index { [] }
+  }
+  args.state.ants = 250.map_with_index {
     build_ant(args).tap { |ant|
       ant.x = 20 + rand * 1240
       ant.y = 20 + rand * 680
+
+      rand_angle = rand * Math::PI * 2
+      ant.goal_direction.x = Math.sin(rand_angle) * WANDER_STRENGTH
+      ant.goal_direction.y = Math.cos(rand_angle) * WANDER_STRENGTH
     }
   }
   args.state.colliders = [
@@ -95,22 +105,65 @@ def setup(args)
   ]
 end
 
-def update_food_position(args)
-  food = args.state.food
-  food.x = args.inputs.mouse.x - FOOD_HALF_W
-  food.y = args.inputs.mouse.y - FOOD_HALF_H
+def update_cursor_position(args)
+  cursor = args.state.cursor
+  cursor.x = args.inputs.mouse.x - FOOD_HALF_W
+  cursor.y = args.inputs.mouse.y - FOOD_HALF_H
+end
+
+def get_map_cell(args, position)
+  args.state.cells[position.x.div(CELL_SIZE)][position.y.div(CELL_SIZE)]
+end
+
+def all_food_in_rect(args, rect)
+  left = [0, rect.left.div(CELL_SIZE)].max
+  right = [1280 / CELL_SIZE - 1, rect.right.div(CELL_SIZE)].min
+  bottom = [0, rect.bottom.div(CELL_SIZE)].max
+  top = [720 / CELL_SIZE - 1, rect.top.div(CELL_SIZE)].min
+  cells = args.state.cells
+
+  Enumerator.new do |yielder|
+    (left..right).each do |x|
+      (bottom..top).each do |y|
+        cells[x][y].each do |food|
+          yielder << food
+        end
+      end
+    end
+  end
+end
+
+def get_all_food_in_circle(args, center, radius)
+  all_food_in_rect(args, [center.x - radius, center.y - radius, radius * 2, radius * 2]).select { |food|
+    (food.x - center.x)**2 + (food.y - center.y)**2 <= radius**2
+  }
+end
+
+def turn_towards_food(args, ant)
+  ant_pos = center_of(ant)
+  food_in_radius = get_all_food_in_circle(args, ant_pos, 50).to_a.sample
+  return unless food_in_radius
+
+  ant.goal_direction.x = food_in_radius.x - ant_pos.x
+  ant.goal_direction.y = food_in_radius.y - ant_pos.y
+  normalize_vector!(ant.goal_direction)
+end
+
+def handle_mouse_click(args)
+  return unless args.mouse.click
+
+  placed_food = args.state.cursor.dup
+  get_map_cell(args, placed_food) << placed_food
+  args.state.food << placed_food
 end
 
 def turn_ant_towards_goal_direction(ant)
-  desired_vx = ant.goal_direction.x * MAX_SPEED
-  desired_vy = ant.goal_direction.y * MAX_SPEED
-  acceleration = clamped_vector(
-    (desired_vx - ant.v.x) * STEER_STRENGTH,
-    (desired_vy - ant.v.y) * STEER_STRENGTH,
-    STEER_STRENGTH
-  )
-  ant.v.x += acceleration.x * DT
-  ant.v.y += acceleration.y * DT
+  ant.acceleration.x = (ant.goal_direction.x * MAX_SPEED - ant.v.x) * STEER_STRENGTH
+  ant.acceleration.y = (ant.goal_direction.y * MAX_SPEED - ant.v.y) * STEER_STRENGTH
+  clamp_vector!(ant.acceleration, STEER_STRENGTH)
+
+  ant.v.x += ant.acceleration.x * DT
+  ant.v.y += ant.acceleration.y * DT
   clamp_vector!(ant.v, MAX_SPEED)
 end
 
@@ -156,6 +209,7 @@ end
 def update_ants(args)
   args.state.ants.each do |ant|
     change_goal_direction_randomly(args, ant)
+    turn_towards_food(args, ant)
     # follow_food(args, ant)
     turn_ant_towards_goal_direction(ant)
     handle_collision(args, ant) if args.tick_count.mod_zero? 10
@@ -165,12 +219,14 @@ end
 
 def tick(args)
   setup(args) if args.tick_count.zero?
-  update_food_position(args)
+  update_cursor_position(args)
+  handle_mouse_click(args)
   update_ants(args)
 
-  args.outputs.background_color = [89, 125, 206]
+  args.outputs.background_color = [117, 113, 97]
   args.outputs.primitives << args.state.food
   args.outputs.primitives << args.state.ants
+  args.outputs.primitives << args.state.cursor
 end
 
 $gtk.reset
