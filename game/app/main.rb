@@ -51,6 +51,26 @@ def clamped_vector(x, y, max_length)
   clamp_vector! [x, y], max_length
 end
 
+def update_render_position(entity)
+  entity.x = entity.position.x - entity.w.div(2)
+  entity.y = entity.position.y - entity.h.div(2)
+end
+
+def build_nest(args)
+  args.state.new_entity_strict(
+    :nest,
+    position: [0, 0],
+    w: 64,
+    h: 64,
+    path: 'nest.png'
+  ).tap { |result|
+    result.attr_sprite
+    result.position.x = 200 + 880 * rand
+    result.position.y = 200 + 320 * rand
+    update_render_position(result)
+  }
+end
+
 def build_food(args)
   args.state.new_entity_strict(
     :food,
@@ -67,6 +87,7 @@ def build_ant(args)
     :ant,
     x: 0,
     y: 0,
+    position: [0, 0],
     w: 15 * ZOOM_FACTOR,
     h: 16 * ZOOM_FACTOR,
     path: 'ant.png',
@@ -76,27 +97,27 @@ def build_ant(args)
     v: [0, 0],
     acceleration: [0, 0],
     goal_direction: [0, 1]
-  ) do |entity|
-    entity.attr_sprite
-  end
+  ).tap { |result|
+    result.attr_sprite
+    nest_position = args.state.nest.position
+    result.position.x = nest_position.x
+    result.position.y = nest_position.y
+    update_render_position(result)
+
+    rand_angle = rand * Math::PI * 2
+    result.goal_direction.x = Math.sin(rand_angle) * WANDER_STRENGTH
+    result.goal_direction.y = Math.cos(rand_angle) * WANDER_STRENGTH
+  }
 end
 
 def setup(args)
+  args.state.nest = build_nest(args)
   args.state.cursor = build_food(args)
   args.state.food = {}
   args.state.cells = (1280 / CELL_SIZE).map_with_index {
     (720 / CELL_SIZE).map_with_index { [] }
   }
-  args.state.ants = 250.map_with_index {
-    build_ant(args).tap { |ant|
-      ant.x = 20 + rand * 1240
-      ant.y = 20 + rand * 680
-
-      rand_angle = rand * Math::PI * 2
-      ant.goal_direction.x = Math.sin(rand_angle) * WANDER_STRENGTH
-      ant.goal_direction.y = Math.cos(rand_angle) * WANDER_STRENGTH
-    }
-  }
+  args.state.ants = 50.map_with_index { build_ant(args) }
   args.state.colliders = [
     [-100, -100, 1480, 100],
     [-100, 720, 1480, 100],
@@ -121,12 +142,13 @@ def all_food_in_rect(args, rect)
   bottom = [0, rect.bottom.div(CELL_SIZE)].max
   top = [720 / CELL_SIZE - 1, rect.top.div(CELL_SIZE)].min
   cells = args.state.cells
+  food = args.state.food
 
   Enumerator.new do |yielder|
     (left..right).each do |x|
       (bottom..top).each do |y|
-        cells[x][y].each do |food|
-          yielder << food
+        cells[x][y].each do |food_id|
+          yielder << food[food_id]
         end
       end
     end
@@ -140,21 +162,23 @@ def get_all_food_in_circle(args, center, radius)
 end
 
 def turn_towards_food(args, ant)
-  ant_pos = center_of(ant)
-  food_in_radius = get_all_food_in_circle(args, ant_pos, 50).to_a.sample
+  food_in_radius = get_all_food_in_circle(args, ant.position, 50).to_a.sample
   return unless food_in_radius
 
-  ant.goal_direction.x = food_in_radius.x - ant_pos.x
-  ant.goal_direction.y = food_in_radius.y - ant_pos.y
+  ant.goal_direction.x = food_in_radius.x - ant.position.x
+  ant.goal_direction.y = food_in_radius.y - ant.position.y
   normalize_vector!(ant.goal_direction)
 end
 
 def handle_mouse_click(args)
   return unless args.mouse.click
 
-  placed_food = args.state.cursor.dup
-  get_map_cell(args, placed_food) << placed_food
-  args.state.food << placed_food
+  cursor = args.state.cursor
+  placed_food = build_food(args)
+  placed_food.x = cursor.x
+  placed_food.y = cursor.y
+  get_map_cell(args, placed_food) << placed_food.entity_id
+  args.state.food[placed_food.entity_id] = placed_food
 end
 
 def turn_ant_towards_goal_direction(ant)
@@ -168,8 +192,9 @@ def turn_ant_towards_goal_direction(ant)
 end
 
 def move_ant(ant)
-  ant.x += ant.v.x * DT
-  ant.y += ant.v.y * DT
+  ant.position.x += ant.v.x * DT
+  ant.position.y += ant.v.y * DT
+  update_render_position(ant)
   ant.angle = -Math.atan2(ant.v.x, ant.v.y).to_degrees
 end
 
@@ -177,8 +202,8 @@ def follow_food(args, ant)
   food_x = args.state.food.x + args.state.food.w.div(2)
   food_y = args.state.food.y + args.state.food.h.div(2)
   ant.goal_direction = normalized_vector(
-    food_x - (ant.x + ANT_HALF_W),
-    food_y - (ant.y + ANT_HALF_H)
+    food_x - ant.position.x,
+    food_y - ant.position.y
   )
 end
 
@@ -191,7 +216,7 @@ end
 
 def handle_collision(args, ant)
   normalized_v = normalized_vector(ant.v.x, ant.v.y)
-  ant_position = center_of(ant)
+  ant_position = ant.position
   front = [ant_position.x + normalized_v.x * ANT_HALF_H, ant_position.y + normalized_v.y * ANT_HALF_H]
 
   collider = args.state.colliders.find { |collider| front.inside_rect? collider }
@@ -224,8 +249,9 @@ def tick(args)
   update_ants(args)
 
   args.outputs.background_color = [117, 113, 97]
-  args.outputs.primitives << args.state.food
+  args.outputs.primitives << args.state.food.each_value
   args.outputs.primitives << args.state.ants
+  args.outputs.primitives << args.state.nest
   args.outputs.primitives << args.state.cursor
 end
 
