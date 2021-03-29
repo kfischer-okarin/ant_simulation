@@ -72,7 +72,8 @@ def build_food(args)
     position: [0, 0],
     w: 12 * ZOOM_FACTOR,
     h: 12 * ZOOM_FACTOR,
-    path: 'food.png'
+    path: 'food.png',
+    carried: false
   ).tap { |result|
     result.attr_sprite
   }
@@ -92,7 +93,9 @@ def build_ant(args)
     angle_anchor_y: 0.5,
     v: [0, 0],
     acceleration: [0, 0],
-    goal_direction: [0, 1]
+    goal_direction: [0, 1],
+    target_food_id: nil,
+    carried_food_id: nil
   ).tap { |result|
     result.attr_sprite
     nest_position = args.state.nest.position
@@ -158,15 +161,30 @@ def get_all_food_in_circle(args, center, radius)
   }
 end
 
-def turn_towards_food(args, ant)
-  food_in_radius = get_all_food_in_circle(args, ant.position, 50).select { |food|
+def find_target_food(args, ant)
+  if ant.target_food_id
+    result = args.state.food[ant.target_food_id]
+    return result if result && !result.carried
+
+    ant.target_food_id = nil
+  end
+
+  get_all_food_in_circle(args, ant.position, 50).select { |food|
+    next if food.carried
+
     food_direction = [food.position.x - ant.position.x, food.position.y - ant.position.y]
     dot_product(ant.v, food_direction).positive?
   }.sample
-  return unless food_in_radius
+end
 
-  ant.goal_direction.x = food_in_radius.x - ant.position.x
-  ant.goal_direction.y = food_in_radius.y - ant.position.y
+
+def turn_towards_food(args, ant)
+  target_food = find_target_food(args, ant)
+  return unless target_food
+
+  ant.target_food_id = target_food.entity_id
+  ant.goal_direction.x = target_food.x - ant.position.x
+  ant.goal_direction.y = target_food.y - ant.position.y
   normalize_vector!(ant.goal_direction)
 end
 
@@ -206,15 +224,19 @@ def change_goal_direction_randomly(args, ant)
   normalize_vector!(ant.goal_direction)
 end
 
-def handle_collision(args, ant)
-  normalized_v = normalized_vector(ant.v.x, ant.v.y)
-  ant_position = ant.position
-  front = [ant_position.x + normalized_v.x * ant.h.half, ant_position.y + normalized_v.y * ant.h.half]
+def position_in_front_of_ant(ant)
+  [ant.position.x, ant.position.y].tap { |result|
+    angle = -ant.angle.to_radians
+    result.x += Math.sin(angle) * ant.h.half
+    result.y += Math.cos(angle) * ant.h.half
+  }
+end
 
+def handle_collision(args, ant, front)
   collider = args.state.colliders.find { |collider| front.inside_rect? collider }
   return unless collider
 
-  if ant_position.y >= collider.bottom && ant_position.y <= collider.top
+  if ant.position.y >= collider.bottom && ant.position.y <= collider.top
     ant.v.x *= -1
     ant.goal_direction.x *= -1
   else
@@ -223,13 +245,38 @@ def handle_collision(args, ant)
   end
 end
 
+def handle_take_food(args, ant, front)
+  return unless ant.target_food_id
+
+  target_food = find_target_food(args, ant)
+  square_distance = (target_food.position.x - front.x)**2 + (target_food.position.y - front.y)**2
+  return unless square_distance < 100
+
+  target_food.carried = true
+  ant.carried_food_id = ant.target_food_id
+  ant.target_food_id = nil
+end
+
+def handle_carry_food(args, ant, front)
+  return unless ant.carried_food_id
+
+  carried_food = args.state.food[ant.carried_food_id]
+  carried_food.position.x = front.x
+  carried_food.position.y = front.y
+  update_render_position(carried_food)
+end
+
 def update_ants(args)
   args.state.ants.each do |ant|
     change_goal_direction_randomly(args, ant)
     turn_towards_food(args, ant)
     turn_ant_towards_goal_direction(ant)
-    handle_collision(args, ant) if args.tick_count.mod_zero? 10
     move_ant(ant)
+
+    front = position_in_front_of_ant(ant)
+    handle_collision(args, ant, front) if args.tick_count.mod_zero? 10
+    handle_take_food(args, ant, front)
+    handle_carry_food(args, ant, front)
   end
 end
 
