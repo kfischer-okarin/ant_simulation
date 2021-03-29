@@ -112,9 +112,9 @@ end
 def setup(args)
   args.state.nest = build_nest(args)
   args.state.cursor = build_food(args)
-  args.state.food = {}
+  args.state.objects = { food: {} }
   args.state.cells = (1280 / CELL_SIZE).map_with_index {
-    (720 / CELL_SIZE).map_with_index { [] }
+    (720 / CELL_SIZE).map_with_index { {} }
   }
   args.state.ants = 50.map_with_index { build_ant(args) }
   args.state.colliders = [
@@ -136,47 +136,65 @@ def get_map_cell(args, position)
   args.state.cells[position.x.div(CELL_SIZE)][position.y.div(CELL_SIZE)]
 end
 
-def all_food_in_rect(args, rect)
+def add_to_objects(args, entity)
+  objects = args.state.objects
+  objects[entity.entity_type] ||= {}
+  objects[entity.entity_type][entity.entity_id] = entity
+end
+
+def add_to_map_cell(args, entity)
+  cell = get_map_cell(args, entity.position)
+  cell[entity.entity_type] ||= []
+  cell[entity.entity_type] << entity.entity_id
+end
+
+def remove_from_map_cell(args, entity)
+  cell = get_map_cell(args, entity.position)
+  return unless cell[entity.entity_type]
+
+  cell[entity.entity_type].delete entity.entity_id
+end
+
+def all_entities_in_rect(args, entity_type, rect)
   left = [0, rect.left.div(CELL_SIZE)].max
   right = [1280 / CELL_SIZE - 1, rect.right.div(CELL_SIZE)].min
   bottom = [0, rect.bottom.div(CELL_SIZE)].max
   top = [720 / CELL_SIZE - 1, rect.top.div(CELL_SIZE)].min
   cells = args.state.cells
-  food = args.state.food
+  entities = args.state.objects[entity_type]
 
   Enumerator.new do |yielder|
     (left..right).each do |x|
       (bottom..top).each do |y|
-        cells[x][y].each do |food_id|
-          yielder << food[food_id]
+        (cells[x][y][entity_type] || []).each do |entity_id|
+          yielder << entities[entity_id]
         end
       end
     end
   end
 end
 
-def get_all_food_in_circle(args, center, radius)
-  all_food_in_rect(args, [center.x - radius, center.y - radius, radius * 2, radius * 2]).select { |food|
-    (food.x - center.x)**2 + (food.y - center.y)**2 <= radius**2
+def all_entities_in_circle(args, entity_type, center, radius)
+  all_entities_in_rect(args, entity_type, [center.x - radius, center.y - radius, radius * 2, radius * 2]).select { |entity|
+    (entity.position.x - center.x)**2 + (entity.position.y - center.y)**2 <= radius**2
   }
 end
 
 def find_target_food(args, ant)
   if ant.target_food_id
-    result = args.state.food[ant.target_food_id]
+    result = args.state.objects[:food][ant.target_food_id]
     return result if result && !result.carried
 
     ant.target_food_id = nil
   end
 
-  get_all_food_in_circle(args, ant.position, 50).select { |food|
+  all_entities_in_circle(args, :food, ant.position, 50).select { |food|
     next if food.carried
 
     food_direction = [food.position.x - ant.position.x, food.position.y - ant.position.y]
     dot_product(ant.v, food_direction).positive?
   }.sample
 end
-
 
 def turn_towards_food(args, ant)
   target_food = find_target_food(args, ant)
@@ -196,8 +214,8 @@ def handle_mouse_click(args)
   placed_food.position.x = cursor.position.x
   placed_food.position.y = cursor.position.y
   update_render_position(placed_food)
-  get_map_cell(args, placed_food) << placed_food.entity_id
-  args.state.food[placed_food.entity_id] = placed_food
+  add_to_map_cell(args, placed_food)
+  add_to_objects(args, placed_food)
 end
 
 def turn_ant_towards_goal_direction(ant)
@@ -253,6 +271,7 @@ def handle_take_food(args, ant, front)
   return unless square_distance < 100
 
   target_food.carried = true
+  remove_from_map_cell(args, target_food)
   ant.carried_food_id = ant.target_food_id
   ant.target_food_id = nil
 end
@@ -260,7 +279,7 @@ end
 def handle_carry_food(args, ant, front)
   return unless ant.carried_food_id
 
-  carried_food = args.state.food[ant.carried_food_id]
+  carried_food = args.state.objects[:food][ant.carried_food_id]
   carried_food.position.x = front.x
   carried_food.position.y = front.y
   update_render_position(carried_food)
@@ -287,7 +306,8 @@ def tick(args)
   update_ants(args)
 
   args.outputs.background_color = [117, 113, 97]
-  args.outputs.primitives << args.state.food.each_value
+  objects = args.state.objects
+  args.outputs.primitives << objects[:food].each_value
   args.outputs.primitives << args.state.ants
   args.outputs.primitives << args.state.nest
   args.outputs.primitives << args.state.cursor
