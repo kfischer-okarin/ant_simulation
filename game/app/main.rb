@@ -2,15 +2,6 @@ require 'lib/debug_mode.rb'
 require 'lib/extra_keys.rb'
 
 ZOOM_FACTOR = 2
-FOOD_W = 6 * ZOOM_FACTOR
-FOOD_HALF_W = FOOD_W.div(2)
-FOOD_H = 6 * ZOOM_FACTOR
-FOOD_HALF_H = FOOD_H.div(2)
-
-ANT_W = 15 * ZOOM_FACTOR
-ANT_HALF_W = ANT_W.div(2)
-ANT_H = 16 * ZOOM_FACTOR
-ANT_HALF_H = ANT_H.div(2)
 
 MAX_SPEED = 80
 STEER_STRENGTH = 80
@@ -25,6 +16,10 @@ end
 
 def vector_length(x, y)
   Math.sqrt(x**2 + y**2)
+end
+
+def dot_product(v1, v2)
+  v1.x * v2.x + v1.y * v2.y
 end
 
 def clamp_vector!(v, max_length)
@@ -74,12 +69,13 @@ end
 def build_food(args)
   args.state.new_entity_strict(
     :food,
-    w: FOOD_W,
-    h: FOOD_H,
+    position: [0, 0],
+    w: 12 * ZOOM_FACTOR,
+    h: 12 * ZOOM_FACTOR,
     path: 'food.png'
-  ) do |entity|
-    entity.attr_sprite
-  end
+  ).tap { |result|
+    result.attr_sprite
+  }
 end
 
 def build_ant(args)
@@ -128,8 +124,9 @@ end
 
 def update_cursor_position(args)
   cursor = args.state.cursor
-  cursor.x = args.inputs.mouse.x - FOOD_HALF_W
-  cursor.y = args.inputs.mouse.y - FOOD_HALF_H
+  cursor.position.x = args.inputs.mouse.x
+  cursor.position.y = args.inputs.mouse.y
+  update_render_position(cursor)
 end
 
 def get_map_cell(args, position)
@@ -162,7 +159,10 @@ def get_all_food_in_circle(args, center, radius)
 end
 
 def turn_towards_food(args, ant)
-  food_in_radius = get_all_food_in_circle(args, ant.position, 50).to_a.sample
+  food_in_radius = get_all_food_in_circle(args, ant.position, 50).select { |food|
+    food_direction = [food.position.x - ant.position.x, food.position.y - ant.position.y]
+    dot_product(ant.v, food_direction).positive?
+  }.sample
   return unless food_in_radius
 
   ant.goal_direction.x = food_in_radius.x - ant.position.x
@@ -175,8 +175,9 @@ def handle_mouse_click(args)
 
   cursor = args.state.cursor
   placed_food = build_food(args)
-  placed_food.x = cursor.x
-  placed_food.y = cursor.y
+  placed_food.position.x = cursor.position.x
+  placed_food.position.y = cursor.position.y
+  update_render_position(placed_food)
   get_map_cell(args, placed_food) << placed_food.entity_id
   args.state.food[placed_food.entity_id] = placed_food
 end
@@ -198,15 +199,6 @@ def move_ant(ant)
   ant.angle = -Math.atan2(ant.v.x, ant.v.y).to_degrees
 end
 
-def follow_food(args, ant)
-  food_x = args.state.food.x + args.state.food.w.div(2)
-  food_y = args.state.food.y + args.state.food.h.div(2)
-  ant.goal_direction = normalized_vector(
-    food_x - ant.position.x,
-    food_y - ant.position.y
-  )
-end
-
 def change_goal_direction_randomly(args, ant)
   rand_angle = rand * Math::PI * 2
   ant.goal_direction.x += Math.sin(rand_angle) * WANDER_STRENGTH
@@ -217,7 +209,7 @@ end
 def handle_collision(args, ant)
   normalized_v = normalized_vector(ant.v.x, ant.v.y)
   ant_position = ant.position
-  front = [ant_position.x + normalized_v.x * ANT_HALF_H, ant_position.y + normalized_v.y * ANT_HALF_H]
+  front = [ant_position.x + normalized_v.x * ant.h.half, ant_position.y + normalized_v.y * ant.h.half]
 
   collider = args.state.colliders.find { |collider| front.inside_rect? collider }
   return unless collider
@@ -235,7 +227,6 @@ def update_ants(args)
   args.state.ants.each do |ant|
     change_goal_direction_randomly(args, ant)
     turn_towards_food(args, ant)
-    # follow_food(args, ant)
     turn_ant_towards_goal_direction(ant)
     handle_collision(args, ant) if args.tick_count.mod_zero? 10
     move_ant(ant)
