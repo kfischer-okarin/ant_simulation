@@ -10,8 +10,8 @@ CELL_SIZE = 40
 
 DT = 1 / 60
 
-def center_of(rect)
-  [rect.x + rect.w.div(2), rect.y + rect.h.div(2)]
+def outside_screen?(position)
+  position.x.negative? || position.x >= 1280 || position.y.negative? || position.y >= 720
 end
 
 def vector_length(x, y)
@@ -79,6 +79,20 @@ def build_food(args)
   }
 end
 
+def build_home_pheromone(args)
+  args.state.new_entity_strict(
+    :home_pheromone,
+    position: [0, 0],
+    w: 3 * ZOOM_FACTOR,
+    h: 3 * ZOOM_FACTOR,
+    path: 'pheromone.png',
+    r: 89, g: 125, b: 206,
+    amount: 100
+  ).tap { |result|
+    result.attr_sprite
+  }
+end
+
 def build_ant(args)
   args.state.new_entity_strict(
     :ant,
@@ -112,7 +126,7 @@ end
 def setup(args)
   args.state.nest = build_nest(args)
   args.state.cursor = build_food(args)
-  args.state.objects = { food: {} }
+  args.state.objects = { food: {}, home_pheromone: {} }
   args.state.cells = (1280 / CELL_SIZE).map_with_index {
     (720 / CELL_SIZE).map_with_index { {} }
   }
@@ -123,6 +137,10 @@ def setup(args)
     [-100, -100, 100, 920],
     [1280, -100, 100, 920]
   ]
+  args.state.new_pheromones = []
+  args.state.second_buffer = false
+  args.outputs[:pheromone_map].background_color = [0, 0, 0, 0]
+  args.outputs[:pheromone_map2].background_color = [0, 0, 0, 0]
 end
 
 def update_cursor_position(args)
@@ -285,6 +303,18 @@ def handle_carry_food(args, ant, front)
   update_render_position(carried_food)
 end
 
+def handle_drop_home_pheromone(args, ant, back)
+  return if ant.carried_food_id || outside_screen?(back)
+
+  pheromone = build_home_pheromone(args)
+  pheromone.position.x = back.x
+  pheromone.position.y = back.y
+  update_render_position(pheromone)
+  add_to_map_cell(args, pheromone)
+  add_to_objects(args, pheromone)
+  args.state.new_pheromones << pheromone.entity_id
+end
+
 def update_ants(args)
   args.state.ants.each do |ant|
     change_goal_direction_randomly(args, ant)
@@ -293,14 +323,39 @@ def update_ants(args)
     move_ant(ant)
 
     front = position_in_front_of_ant(ant)
-    handle_collision(args, ant, front) if args.tick_count.mod_zero? 10
+    back = [ant.position.x + ant.position.x - front.x, ant.position.y + ant.position.y - front.y]
     handle_take_food(args, ant, front)
     handle_carry_food(args, ant, front)
+    if args.tick_count.mod_zero? 10
+      handle_collision(args, ant, front)
+      handle_drop_home_pheromone(args, ant, back)
+    end
   end
+end
+
+def render_new_pheromones(args)
+  if args.state.second_buffer
+    previous_target_name = :pheromone_map
+    target = args.outputs[:pheromone_map2]
+  else
+    previous_target_name = :pheromone_map2
+    target = args.outputs[:pheromone_map]
+  end
+
+  alpha = args.tick_count.mod_zero?(5) ? 250 : 255
+  target.background_color = [0, 0, 0, 0]
+  target.primitives << { x: 0, y: 0, w: 1280, h: 720, path: previous_target_name, a: alpha }.sprite
+  pheromones = args.state.objects[:home_pheromone]
+  args.state.new_pheromones.each do |entity_id|
+    target.primitives << pheromones[entity_id]
+  end
+  args.state.new_pheromones.clear
 end
 
 def tick(args)
   setup(args) if args.tick_count.zero?
+  return if args.tick_count < 2
+
   update_cursor_position(args)
   handle_mouse_click(args)
   update_ants(args)
@@ -308,6 +363,9 @@ def tick(args)
   args.outputs.background_color = [117, 113, 97]
   objects = args.state.objects
   args.outputs.primitives << objects[:food].each_value
+  render_new_pheromones(args)
+  args.outputs.primitives << [0, 0, 1280, 720, args.state.second_buffer ? :pheromone_map2 : :pheromone_map].sprite
+  args.state.second_buffer = !args.state.second_buffer
   args.outputs.primitives << args.state.ants
   args.outputs.primitives << args.state.nest
   args.outputs.primitives << args.state.cursor
