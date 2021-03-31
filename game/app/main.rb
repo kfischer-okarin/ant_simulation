@@ -94,46 +94,85 @@ def build_home_pheromone(args)
   }
 end
 
-def build_ant(args)
-  args.state.new_entity_strict(
-    :ant,
-    x: 0,
-    y: 0,
-    position: [0, 0],
-    w: 15 * ZOOM_FACTOR,
-    h: 16 * ZOOM_FACTOR,
-    path: 'ant.png',
-    angle: 0,
-    angle_anchor_x: 0.5,
-    angle_anchor_y: 0.5,
-    v: [0, 0],
-    acceleration: [0, 0],
-    goal_direction: [0, 1],
-    target_food_id: nil,
-    carried_food_id: nil
-  ).tap { |result|
-    result.attr_sprite
-    nest_position = args.state.nest.position
-    result.position.x = nest_position.x
-    result.position.y = nest_position.y
-    update_render_position(result)
-
-    rand_angle = rand * Math::PI * 2
-    result.goal_direction.x = Math.sin(rand_angle) * WANDER_STRENGTH
-    result.goal_direction.y = Math.cos(rand_angle) * WANDER_STRENGTH
-  }
+def random_position
+  [rand * 1280, rand * 720]
 end
 
-def place_new_ant(args)
-  args.state.nest ||= build_nest(args)
-  build_ant(args).tap { |ant|
-    args.state.ants ||= []
-    args.state.ants << ant
-  }
+def random_orientation
+  rand_angle = rand * Math::PI * 2
+  [Math.sin(rand_angle), Math.cos(rand_angle)]
+end
+
+module Ant
+  class << self
+    def place_new(args, position: nil, orientation: nil)
+      args.state.new_entity_strict(
+        :ant,
+        x: 0,
+        y: 0,
+        position: position&.dup || random_position,
+        w: 15 * ZOOM_FACTOR,
+        h: 16 * ZOOM_FACTOR,
+        path: 'ant.png',
+        angle: 0,
+        angle_anchor_x: 0.5,
+        angle_anchor_y: 0.5,
+        v: [0, 0],
+        acceleration: [0, 0],
+        goal_direction: orientation&.dup || random_orientation,
+        target_food_id: nil,
+        carried_food_id: nil
+      ).tap { |ant|
+        ant.attr_sprite
+        update_render_position(ant)
+
+        set_orientation(ant, ant.goal_direction)
+
+        ants(args) << ant
+      }
+    end
+
+    def orientation(ant)
+      angle = -ant.angle.to_radians
+      [Math.sin(angle), Math.cos(angle)]
+    end
+
+    def set_orientation(ant, orientation)
+      ant.angle = -Math.atan2(orientation.x, orientation.y).to_degrees
+    end
+
+    def update_all(args)
+      ants(args).each do |ant|
+        change_goal_direction_randomly(args, ant)
+        turn_towards_food(args, ant)
+        turn_ant_towards_goal_direction(ant)
+        move_ant(ant)
+
+        front = position_in_front_of_ant(ant)
+        back = [ant.position.x + ant.position.x - front.x, ant.position.y + ant.position.y - front.y]
+        handle_take_food(args, ant, front)
+        handle_carry_food(args, ant, front)
+        if args.tick_count.mod_zero? 10
+          handle_collision(args, ant, front)
+          handle_drop_home_pheromone(args, ant, back)
+        end
+      end
+    end
+
+    private
+
+    def ants(args)
+      args.state.ants ||= []
+    end
+  end
 end
 
 def setup(args)
-  50.times { place_new_ant(args) }
+  args.state.nest = build_nest(args)
+  nest_position = args.state.nest.position
+  50.times do
+    Ant.place_new(args, position: nest_position)
+  end
   args.state.cursor = build_food(args)
   args.state.objects = { food: {}, home_pheromone: {} }
   args.state.cells = (1280 / CELL_SIZE).map_with_index {
@@ -258,7 +297,7 @@ def move_ant(ant)
   ant.position.x += ant.v.x * DT
   ant.position.y += ant.v.y * DT
   update_render_position(ant)
-  ant.angle = -Math.atan2(ant.v.x, ant.v.y).to_degrees
+  Ant.set_orientation(ant, ant.v)
 end
 
 def change_goal_direction_randomly(args, ant)
@@ -323,24 +362,6 @@ def handle_drop_home_pheromone(args, ant, back)
   args.state.new_pheromones << pheromone.entity_id
 end
 
-def update_ants(args)
-  args.state.ants.each do |ant|
-    change_goal_direction_randomly(args, ant)
-    turn_towards_food(args, ant)
-    turn_ant_towards_goal_direction(ant)
-  move_ant(ant)
-
-  front = position_in_front_of_ant(ant)
-    back = [ant.position.x + ant.position.x - front.x, ant.position.y + ant.position.y - front.y]
-    handle_take_food(args, ant, front)
-    handle_carry_food(args, ant, front)
-    if args.tick_count.mod_zero? 10
-      handle_collision(args, ant, front)
-      handle_drop_home_pheromone(args, ant, back)
-    end
-  end
-end
-
 def render_new_pheromones(args)
   if args.state.second_buffer
     previous_target_name = :pheromone_map
@@ -366,7 +387,7 @@ def tick(args)
 
   update_cursor_position(args)
   handle_mouse_click(args)
-  update_ants(args)
+  Ant.update_all(args)
 
   args.outputs.background_color = [117, 113, 97]
   objects = args.state.objects
