@@ -52,6 +52,12 @@ def update_render_position(entity)
   entity.y = entity.position.y - entity.h.div(2)
 end
 
+def build_cells
+  (1280 / CELL_SIZE).map_with_index {
+    (720 / CELL_SIZE).map_with_index { {} }
+  }
+end
+
 def build_nest(args)
   args.state.new_entity_strict(
     :nest,
@@ -141,6 +147,12 @@ module Ant
       ant.angle = -Math.atan2(orientation.x, orientation.y).to_degrees
     end
 
+    def targeted_food(args, ant)
+      return unless ant.target_food_id
+
+      Food.with_id(args, ant.target_food_id)
+    end
+
     def update_all(args)
       ants(args).each do |ant|
         change_goal_direction_randomly(args, ant)
@@ -167,17 +179,38 @@ module Ant
   end
 end
 
+module Food
+  class << self
+    def place_new(args, position: nil)
+      args.state.new_entity_strict(
+        :food,
+        position: position&.dup || random_position,
+        w: 12 * ZOOM_FACTOR,
+        h: 12 * ZOOM_FACTOR,
+        path: 'food.png',
+        carried: false
+      ).tap { |food|
+        food.attr_sprite
+
+        update_render_position(food)
+        add_to_map_cell(args, food)
+        add_to_objects(args, food)
+      }
+    end
+
+    def with_id(args, id)
+      get_entities_of_type(args, :food)[id]
+    end
+  end
+end
+
 def setup(args)
   args.state.nest = build_nest(args)
   nest_position = args.state.nest.position
   50.times do
     Ant.place_new(args, position: nest_position)
   end
-  args.state.cursor = build_food(args)
-  args.state.objects = { food: {}, home_pheromone: {} }
-  args.state.cells = (1280 / CELL_SIZE).map_with_index {
-    (720 / CELL_SIZE).map_with_index { {} }
-  }
+  args.state.cursor = { w: 12 * ZOOM_FACTOR, h: 12 * ZOOM_FACTOR, path: 'food.png' }.sprite
   args.state.colliders = [
     [-100, -100, 1480, 100],
     [-100, 720, 1480, 100],
@@ -192,19 +225,25 @@ end
 
 def update_cursor_position(args)
   cursor = args.state.cursor
-  cursor.position.x = args.inputs.mouse.x
-  cursor.position.y = args.inputs.mouse.y
-  update_render_position(cursor)
+  cursor.x = args.inputs.mouse.x - cursor.w.half
+  cursor.y = args.inputs.mouse.y - cursor.h.half
+end
+
+def get_map_cells(args)
+  args.state.cells ||= build_cells
 end
 
 def get_map_cell(args, position)
-  args.state.cells[position.x.div(CELL_SIZE)][position.y.div(CELL_SIZE)]
+  get_map_cells(args)[position.x.div(CELL_SIZE)][position.y.div(CELL_SIZE)]
+end
+
+def get_entities_of_type(args, type)
+  args.state.objects ||= { food: {}, home_pheromone: {} }
+  args.state.objects[type] ||= {}
 end
 
 def add_to_objects(args, entity)
-  objects = args.state.objects
-  objects[entity.entity_type] ||= {}
-  objects[entity.entity_type][entity.entity_id] = entity
+  get_entities_of_type(args, entity.entity_type)[entity.entity_id] = entity
 end
 
 def add_to_map_cell(args, entity)
@@ -225,8 +264,8 @@ def all_entities_in_rect(args, entity_type, rect)
   right = [1280 / CELL_SIZE - 1, rect.right.div(CELL_SIZE)].min
   bottom = [0, rect.bottom.div(CELL_SIZE)].max
   top = [720 / CELL_SIZE - 1, rect.top.div(CELL_SIZE)].min
-  cells = args.state.cells
-  entities = args.state.objects[entity_type]
+  cells = get_map_cells(args)
+  entities = get_entities_of_type(args, entity_type)
 
   Enumerator.new do |yielder|
     (left..right).each do |x|
@@ -247,7 +286,7 @@ end
 
 def find_target_food(args, ant)
   if ant.target_food_id
-    result = args.state.objects[:food][ant.target_food_id]
+    result = get_entities_of_type(args, :food)[ant.target_food_id]
     return result if result && !result.carried
 
     ant.target_food_id = nil
@@ -257,7 +296,7 @@ def find_target_food(args, ant)
     next if food.carried
 
     food_direction = [food.position.x - ant.position.x, food.position.y - ant.position.y]
-    dot_product(ant.v, food_direction).positive?
+    dot_product(Ant.orientation(ant), food_direction).positive?
   }.sample
 end
 
@@ -274,13 +313,7 @@ end
 def handle_mouse_click(args)
   return unless args.mouse.click
 
-  cursor = args.state.cursor
-  placed_food = build_food(args)
-  placed_food.position.x = cursor.position.x
-  placed_food.position.y = cursor.position.y
-  update_render_position(placed_food)
-  add_to_map_cell(args, placed_food)
-  add_to_objects(args, placed_food)
+  Food.place_new(args, position: [args.mouse.x, args.mouse.y])
 end
 
 def turn_ant_towards_goal_direction(ant)
@@ -344,13 +377,14 @@ end
 def handle_carry_food(args, ant, front)
   return unless ant.carried_food_id
 
-  carried_food = args.state.objects[:food][ant.carried_food_id]
+  carried_food = get_entities_of_type(args, :food)[ant.carried_food_id]
   carried_food.position.x = front.x
   carried_food.position.y = front.y
   update_render_position(carried_food)
 end
 
 def handle_drop_home_pheromone(args, ant, back)
+  return
   return if ant.carried_food_id || outside_screen?(back)
 
   pheromone = build_home_pheromone(args)
@@ -374,7 +408,7 @@ def render_new_pheromones(args)
   alpha = args.tick_count.mod_zero?(5) ? 250 : 255
   target.background_color = [0, 0, 0, 0]
   target.primitives << { x: 0, y: 0, w: 1280, h: 720, path: previous_target_name, a: alpha }.sprite
-  pheromones = args.state.objects[:home_pheromone]
+  pheromones = get_entities_of_type(args, :home_pheromone)
   args.state.new_pheromones.each do |entity_id|
     target.primitives << pheromones[entity_id]
   end
@@ -390,8 +424,7 @@ def tick(args)
   Ant.update_all(args)
 
   args.outputs.background_color = [117, 113, 97]
-  objects = args.state.objects
-  args.outputs.primitives << objects[:food].each_value
+  args.outputs.primitives << get_entities_of_type(args, :food).each_value
   render_new_pheromones(args)
   args.outputs.primitives << [0, 0, 1280, 720, args.state.second_buffer ? :pheromone_map2 : :pheromone_map].sprite
   args.state.second_buffer = !args.state.second_buffer

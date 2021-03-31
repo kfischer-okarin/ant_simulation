@@ -24,5 +24,14 @@ def test_ants_will_wander_around_randomly(args, assert)
   assert.true! position_before != ant.position, 'position was same'
 end
 
+def test_ants_will_see_food_close_in_front(args, assert)
+  ant = Ant.place_new(args, position: [200, 200], orientation: [1, 0])
+  food = Food.place_new(args, position: [250, 200])
+
+  Ant.update_all(args)
+
+  assert.equal! Ant.targeted_food(args, ant), food, 'did not target right food'
+end
+
 $gtk.reset 100
 $gtk.log_level = :off
