@@ -124,14 +124,21 @@ def build_ant(args)
   }
 end
 
+def place_new_ant(args)
+  args.state.nest ||= build_nest(args)
+  build_ant(args).tap { |ant|
+    args.state.ants ||= []
+    args.state.ants << ant
+  }
+end
+
 def setup(args)
-  args.state.nest = build_nest(args)
+  50.times { place_new_ant(args) }
   args.state.cursor = build_food(args)
   args.state.objects = { food: {}, home_pheromone: {} }
   args.state.cells = (1280 / CELL_SIZE).map_with_index {
     (720 / CELL_SIZE).map_with_index { {} }
   }
-  args.state.ants = 50.map_with_index { build_ant(args) }
   args.state.colliders = [
     [-100, -100, 1480, 100],
     [-100, 720, 1480, 100],
@@ -321,9 +328,9 @@ def update_ants(args)
     change_goal_direction_randomly(args, ant)
     turn_towards_food(args, ant)
     turn_ant_towards_goal_direction(ant)
-    move_ant(ant)
+  move_ant(ant)
 
-    front = position_in_front_of_ant(ant)
+  front = position_in_front_of_ant(ant)
     back = [ant.position.x + ant.position.x - front.x, ant.position.y + ant.position.y - front.y]
     handle_take_food(args, ant, front)
     handle_carry_food(args, ant, front)
