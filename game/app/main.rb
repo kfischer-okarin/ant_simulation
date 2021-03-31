@@ -7,6 +7,7 @@ MAX_SPEED = 80
 STEER_STRENGTH = 80
 WANDER_STRENGTH = 0.1
 CELL_SIZE = 40
+VIEW_RADIUS = 100
 
 DT = 1 / 60
 
@@ -206,7 +207,7 @@ def find_target_food(args, ant)
     ant.target_food_id = nil
   end
 
-  all_entities_in_circle(args, :food, ant.position, 50).select { |food|
+  all_entities_in_circle(args, :food, ant.position, VIEW_RADIUS).select { |food|
     next if food.carried
 
     food_direction = [food.position.x - ant.position.x, food.position.y - ant.position.y]
