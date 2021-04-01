@@ -161,17 +161,29 @@ module Ant
       Food.with_id(args, ant.target_food_id)
     end
 
+    def carried_food(args, ant)
+      return unless ant.carried_food_id
+
+      Food.with_id(args, ant.carried_food_id)
+    end
+
+    def carry_food(ant, food)
+      food.carried = true
+      ant.carried_food_id = ant.target_food_id
+      untarget_food(ant)
+    end
+
     def update_all(args)
       ants(args).each do |ant|
         change_goal_direction_randomly(args, ant)
         target_food = find_target_food(args, ant)
-        turn_towards_food(ant, target_food) if target_food
+        turn_towards_object(ant, target_food) if target_food
         turn_ant_towards_goal_direction(ant)
         move_ant(ant)
 
         front = position_in_front_of_ant(ant)
         back = [ant.position.x + ant.position.x - front.x, ant.position.y + ant.position.y - front.y]
-        handle_take_food(args, ant, front)
+        handle_take_food(args, ant, front, target_food) if target_food
         handle_carry_food(args, ant, front)
         if args.tick_count.mod_zero? 10
           handle_collision(args, ant, front)
@@ -184,6 +196,20 @@ module Ant
 
     def ants(args)
       args.state.ants ||= []
+    end
+
+    def turn_towards_object(ant, object)
+      ant.goal_direction.x = object.position.x - ant.position.x
+      ant.goal_direction.y = object.position.y - ant.position.y
+      normalize_vector!(ant.goal_direction)
+    end
+
+    def handle_take_food(args, ant, front, target_food)
+      square_distance = (target_food.position.x - front.x)**2 + (target_food.position.y - front.y)**2
+      return unless square_distance < 100
+
+      carry_food(ant, target_food)
+      remove_from_map_cell(args, target_food)
     end
   end
 end
@@ -298,7 +324,7 @@ def find_target_food(args, ant)
   if target_food
     return target_food unless target_food.carried
 
-    Ant.untarget_food(target_food)
+    Ant.untarget_food(ant)
   end
 
   target_food = all_entities_in_circle(args, :food, ant.position, VIEW_RADIUS).select { |food|
@@ -311,12 +337,6 @@ def find_target_food(args, ant)
   Ant.target_food(ant, target_food) if target_food
 
   target_food
-end
-
-def turn_towards_food(ant, food)
-  ant.goal_direction.x = food.x - ant.position.x
-  ant.goal_direction.y = food.y - ant.position.y
-  normalize_vector!(ant.goal_direction)
 end
 
 def handle_mouse_click(args)
@@ -368,19 +388,6 @@ def handle_collision(args, ant, front)
     ant.v.y *= -1
     ant.goal_direction.y *= -1
   end
-end
-
-def handle_take_food(args, ant, front)
-  return unless ant.target_food_id
-
-  target_food = find_target_food(args, ant)
-  square_distance = (target_food.position.x - front.x)**2 + (target_food.position.y - front.y)**2
-  return unless square_distance < 100
-
-  target_food.carried = true
-  remove_from_map_cell(args, target_food)
-  ant.carried_food_id = ant.target_food_id
-  Ant.untarget_food(target_food)
 end
 
 def handle_carry_food(args, ant, front)
