@@ -147,6 +147,14 @@ module Ant
       ant.angle = -Math.atan2(orientation.x, orientation.y).to_degrees
     end
 
+    def target_food(ant, food)
+      ant.target_food_id = food.entity_id
+    end
+
+    def untarget_food(ant)
+      ant.target_food_id = nil
+    end
+
     def targeted_food(args, ant)
       return unless ant.target_food_id
 
@@ -156,7 +164,8 @@ module Ant
     def update_all(args)
       ants(args).each do |ant|
         change_goal_direction_randomly(args, ant)
-        turn_towards_food(args, ant)
+        target_food = find_target_food(args, ant)
+        turn_towards_food(ant, target_food) if target_food
         turn_ant_towards_goal_direction(ant)
         move_ant(ant)
 
@@ -285,28 +294,28 @@ def all_entities_in_circle(args, entity_type, center, radius)
 end
 
 def find_target_food(args, ant)
-  if ant.target_food_id
-    result = get_entities_of_type(args, :food)[ant.target_food_id]
-    return result if result && !result.carried
+  target_food = Ant.targeted_food(args, ant)
+  if target_food
+    return target_food unless target_food.carried
 
-    ant.target_food_id = nil
+    Ant.untarget_food(target_food)
   end
 
-  all_entities_in_circle(args, :food, ant.position, VIEW_RADIUS).select { |food|
+  target_food = all_entities_in_circle(args, :food, ant.position, VIEW_RADIUS).select { |food|
     next if food.carried
 
     food_direction = [food.position.x - ant.position.x, food.position.y - ant.position.y]
     dot_product(Ant.orientation(ant), food_direction).positive?
   }.sample
+
+  Ant.target_food(ant, target_food) if target_food
+
+  target_food
 end
 
-def turn_towards_food(args, ant)
-  target_food = find_target_food(args, ant)
-  return unless target_food
-
-  ant.target_food_id = target_food.entity_id
-  ant.goal_direction.x = target_food.x - ant.position.x
-  ant.goal_direction.y = target_food.y - ant.position.y
+def turn_towards_food(ant, food)
+  ant.goal_direction.x = food.x - ant.position.x
+  ant.goal_direction.y = food.y - ant.position.y
   normalize_vector!(ant.goal_direction)
 end
 
@@ -371,7 +380,7 @@ def handle_take_food(args, ant, front)
   target_food.carried = true
   remove_from_map_cell(args, target_food)
   ant.carried_food_id = ant.target_food_id
-  ant.target_food_id = nil
+  Ant.untarget_food(target_food)
 end
 
 def handle_carry_food(args, ant, front)

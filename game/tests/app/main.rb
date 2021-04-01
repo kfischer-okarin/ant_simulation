@@ -51,5 +51,16 @@ def test_ants_will_not_see_food_behind(args, assert)
   assert.equal! Ant.targeted_food(args, ant), nil, 'did unexpectedly target food'
 end
 
+def test_ants_will_move_towards_targeted_food(args, assert)
+  ant = Ant.place_new(args, position: [200, 200], orientation: [1, 0])
+  food = Food.place_new(args, position: [300, 200])
+  distance_before = GTK::Geometry.distance(ant.position, food.position)
+
+  Ant.target_food(ant, food)
+  Ant.update_all(args)
+
+  assert.true! GTK::Geometry.distance(ant.position, food.position) < distance_before, 'did not move closer to food'
+end
+
 $gtk.reset 100
 $gtk.log_level = :off
