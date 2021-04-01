@@ -169,7 +169,7 @@ module Ant
 
     def carry_food(ant, food)
       food.carried = true
-      ant.carried_food_id = ant.target_food_id
+      ant.carried_food_id = food.entity_id
       untarget_food(ant)
     end
 
@@ -184,7 +184,8 @@ module Ant
         front = position_in_front_of_ant(ant)
         back = [ant.position.x + ant.position.x - front.x, ant.position.y + ant.position.y - front.y]
         handle_take_food(args, ant, front, target_food) if target_food
-        handle_carry_food(args, ant, front)
+        carried_food = Ant.carried_food(args, ant)
+        handle_carry_food(front, carried_food) if carried_food
         if args.tick_count.mod_zero? 10
           handle_collision(args, ant, front)
           handle_drop_home_pheromone(args, ant, back)
@@ -210,6 +211,12 @@ module Ant
 
       carry_food(ant, target_food)
       remove_from_map_cell(args, target_food)
+    end
+
+    def handle_carry_food(front, carried_food)
+      carried_food.position.x = front.x
+      carried_food.position.y = front.y
+      update_render_position(carried_food)
     end
   end
 end
@@ -388,15 +395,6 @@ def handle_collision(args, ant, front)
     ant.v.y *= -1
     ant.goal_direction.y *= -1
   end
-end
-
-def handle_carry_food(args, ant, front)
-  return unless ant.carried_food_id
-
-  carried_food = get_entities_of_type(args, :food)[ant.carried_food_id]
-  carried_food.position.x = front.x
-  carried_food.position.y = front.y
-  update_render_position(carried_food)
 end
 
 def handle_drop_home_pheromone(args, ant, back)

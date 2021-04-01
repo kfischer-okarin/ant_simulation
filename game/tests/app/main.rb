@@ -72,5 +72,16 @@ def test_ants_will_take_target_food_in_front_of_them(args, assert)
   assert.equal! Ant.carried_food(args, ant), food, 'did not carry the food'
 end
 
+def test_ants_move_carried_food_with_them(args, assert)
+  ant = Ant.place_new(args, position: [200, 200], orientation: [1, 0])
+  food = Food.place_new(args, position: [210, 200])
+  position_before = food.position.dup
+
+  Ant.carry_food(ant, food)
+  Ant.update_all(args)
+
+  assert.true! food.position != position_before, 'food did not move'
+end
+
 $gtk.reset 100
 $gtk.log_level = :off
